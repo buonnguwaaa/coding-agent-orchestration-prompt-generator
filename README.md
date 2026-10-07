@@ -81,7 +81,7 @@ Describe the coding task and ask for an orchestration prompt. The skill triggers
 
 **Model and effort** are chosen by the planner for each implementer and reviewer step. On a FAIL the reviewer chooses them for the fix step. Both stay within the level's cap. Anything you fix explicitly overrides them.
 
-**Run history log:** when the run finishes, the parent writes `prompt-logs/<YYYYMMDD-HHMMSS>-<task-slug>.md` in your project. It lists every step with its exact prompt, settings, status, and a result summary, so you can copy a step and re-run it. To use another folder, name it in your request. Add `prompt-logs/` to `.gitignore` if you don't want to commit the logs.
+**Prompt log:** each time the skill generates a prompt, it immediately saves the request, note, diagram, and full prompt to `prompt-logs/<YYYYMMDD-HHMMSS>-<task-slug>.md` in your current project. To use another folder, name it in your request. Add `prompt-logs/` to `.gitignore` if you don't want to commit the logs.
 
 **Example input:**
 

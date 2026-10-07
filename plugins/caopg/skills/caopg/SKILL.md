@@ -107,8 +107,6 @@ Your job is to:
 
 Do not take over a subagent's work.
 Do not expand the scope.
-
-The only file you may write is the run history log in the log folder.
 ```
 
 If the user's orchestration environment has fixed tool constraints, preserve them exactly.
@@ -544,7 +542,7 @@ The generated parent prompt must say:
 
 ```text
 Pass model and effort exactly as given in EXECUTION SETTINGS or Fix Settings.
-If a value is missing or outside the bounds for this level, use the level default instead and record that in the run history log.
+If a value is missing or outside the bounds for this level, use the level default instead and report that in the final answer.
 If the subagent tool has no model or effort parameter, omit it. Do not invent parameters.
 ```
 
@@ -618,57 +616,45 @@ Do not claim tests passed unless the subagent actually ran them.
 
 ---
 
-# 15. Run history log
+# 15. Prompt log file
 
-The generated parent prompt must keep a run history log and save it as a file in the current project. It must do this whatever the outcome: PASS, FAIL, BLOCKED, or stopped on `UNRESOLVED`. The log lets the user copy each subagent prompt and re-run, audit, or tweak it.
+As soon as the prompt is generated, in the same turn, save it to a file in the current project. Do this yourself, before returning the answer. It is not an instruction inside the generated prompt, and it does not wait for the prompt to be executed.
 
-Log file location:
+Location:
 
-- Folder: `prompt-logs/` at the project root (the orchestrating agent's working directory), unless the user names another folder. Create it if missing.
-- File name: `<YYYYMMDD-HHMMSS>-<task-slug>.md`, using the current local time and a short kebab-case slug of the task. If the time cannot be read, use `<task-slug>-<n>.md` with the next free `n`.
-- Never overwrite an existing log file.
+- Folder: `prompt-logs/` at the current project root (your working directory), unless the user names another folder. Create it if missing.
+- File name: `<YYYYMMDD-HHMMSS>-<task-slug>.md`. Get the local time from the environment (for example `date +%Y%m%d-%H%M%S`). The slug is a short ASCII kebab-case summary of the task. If the time cannot be read, use `<task-slug>-<n>.md` with the next free `n`.
+- Never overwrite an existing file.
 
-The generated parent prompt must say:
-
-```text
-Write the log file only after the final step has finished, so no reviewer sees it in the diff.
-Write it yourself. Do not delegate it to a subagent.
-In the final answer, give the log file path and the final verdict. Do not repeat the log.
-If the file cannot be written, print the log in the final answer instead and say why.
-```
-
-Every implementer and fix prompt must include `prompt-logs/` (or the user's folder) under DO NOT TOUCH.
-
-Do not edit `.gitignore` for the log folder. Mention in the short note that the user may want to ignore it.
-
-Log file format:
+File content, in this order:
 
 ```text
-===== RUN HISTORY LOG =====
-Task: <one-line summary>
-Level: <fast | normal | deep>
-Final verdict: <PASS | FAIL | BLOCKED | STOPPED>
+# <task title>
 
------ STEP <n> | <role> | <PARALLEL with steps … | SEQUENTIAL after steps …> -----
-Settings: model=<…> effort=<…> source=<user | planner | reviewer | level default>
-Status: <DONE | PASS | FAIL | BLOCKED | SKIPPED>
-PROMPT:
-<the exact prompt sent to the subagent>
-RESULT SUMMARY:
-<section headings with verdict lines, UNRESOLVED items, and files changed; no full output>
+- Created: <YYYY-MM-DD HH:MM:SS>
+- Level: <fast | normal | deep>
 
-...
+## Request
+<the user's request, verbatim>
 
-===== END RUN HISTORY LOG =====
+## Note
+<the short note>
+
+## Dependency diagram
+<the diagram, if any>
+
+## Orchestration prompt
+<the complete generated prompt, verbatim, in one fenced text block>
 ```
 
-Rules for the log:
+Rules:
 
-- Number steps in the order they started. Parallel steps share a stage and list each other.
-- Copy prompts exactly as sent. Do not paraphrase or shorten them.
-- When a prompt embeds an upstream output that is already summarized in the log, replace only the body between its delimiters with `<<verbatim output of STEP n>>`. Keep the delimiter lines.
-- Record every fallback to a level default and every skipped step, with the reason.
-- The log is a record. It must not change how the orchestration runs.
+- The file holds exactly what you returned in the answer. Do not paraphrase or shorten it.
+- Write only this file. Do not edit `.gitignore` or anything else. Mention once in the note that the user may want to ignore `prompt-logs/`.
+- End the answer with the saved file path.
+- If you cannot write files in this environment, say so in one line and still return the prompt.
+
+Every implementer and fix prompt in the generated orchestration must list `prompt-logs/` (or the user's folder) under DO NOT TOUCH.
 
 ---
 
@@ -686,7 +672,9 @@ When the user gives a task, generate the final orchestration prompt using this o
 8. Reviewer stage.
 9. Optional fix loop if requested.
 10. Model and effort rules (section 11).
-11. Final result contract, ending with writing the run history log file (section 15).
+11. Final result contract.
+
+Then save the prompt log file (section 15).
 
 Preserve exact names, paths, IDs, task numbers, and constraints from the user's input.
 
@@ -721,7 +709,7 @@ Verify:
 - [ ] The speed level is stated, and the stage shape matches it (section 10).
 - [ ] Planner requires `EXECUTION SETTINGS`; reviewer requires `Fix Settings` when a fix loop exists.
 - [ ] The parent passes model and effort only from user constraints, planner, reviewer, or level defaults, and never invents parameters.
-- [ ] The parent writes the run history log file to `prompt-logs/` (or the user's folder) after the final step, on every outcome, and implementers must not touch that folder.
+- [ ] The prompt log file is saved to `prompt-logs/` (or the user's folder) in this turn, and implementers must not touch that folder.
 - [ ] The generated note and prompt use the same language as the user's input, with no mixed Vietnamese and English prose.
 
 ---
@@ -733,6 +721,7 @@ Unless the user asks for explanation, return:
 1. A short note describing the orchestration shape and the speed level.
 2. One complete copy-paste-ready orchestration prompt.
 3. If useful, a compact dependency diagram.
+4. The path of the saved prompt log file (section 15).
 
 The generated prompt itself should be self-contained and should not depend on this skill being available at runtime.
 
