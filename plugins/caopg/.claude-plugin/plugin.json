@@ -1,0 +1,10 @@
+{
+  "name": "caopg",
+  "version": "1.0.0",
+  "description": "Generate strict multi-agent orchestration prompts (planner → implementer → reviewer) for coding tasks.",
+  "author": {
+    "name": "buonnguwaaa"
+  },
+  "repository": "https://github.com/buonnguwaaa/coding-agent-orchestration-prompt-generator",
+  "keywords": ["orchestration", "subagents", "prompt", "multi-agent", "code-review"]
+}

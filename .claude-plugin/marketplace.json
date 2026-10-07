@@ -1,0 +1,14 @@
+{
+  "name": "caopg",
+  "description": "Coding Agent Orchestration Prompt Generator",
+  "owner": {
+    "name": "buonnguwaaa"
+  },
+  "plugins": [
+    {
+      "name": "caopg",
+      "source": "./plugins/caopg",
+      "description": "Generate strict multi-agent orchestration prompts (planner → implementer → reviewer) for coding tasks."
+    }
+  ]
+}
