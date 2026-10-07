@@ -1,6 +1,6 @@
 {
   "name": "caopg",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Generate strict multi-agent orchestration prompts (planner → implementer → reviewer) for coding tasks.",
   "author": {
     "name": "buonnguwaaa"

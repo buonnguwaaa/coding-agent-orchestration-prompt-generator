@@ -107,6 +107,8 @@ Your job is to:
 
 Do not take over a subagent's work.
 Do not expand the scope.
+
+The only file you may write is the run history log in the log folder.
 ```
 
 If the user's orchestration environment has fixed tool constraints, preserve them exactly.
@@ -281,7 +283,15 @@ When generating a planning subagent prompt, require a stable structure:
 
 # RISKS / REGRESSIONS
 ...
+
+# EXECUTION SETTINGS
+## <downstream step id> (<role>)
+- model: ...
+- effort: ...
+- reason: ...
 ```
+
+`EXECUTION SETTINGS` covers every downstream implementer and reviewer step. See section 11.
 
 If some dimensions are intentionally out of scope, require the planner to state:
 
@@ -433,7 +443,14 @@ Require per-criterion verdicts:
 
 ## Final Verdict
 PASS / FAIL
+
+## Fix Settings
+- model: ...
+- effort: ...
+- reason: ...
 ```
+
+`Fix Settings` is required only when the final verdict is FAIL and a fix loop exists. See section 11.
 
 For every failure require:
 
@@ -478,7 +495,64 @@ Set a maximum retry count when the user specifies one. If none is specified, do 
 
 ---
 
-# 10. Scope fences
+# 10. Speed level
+
+The user may pick one of three levels: `fast`, `normal`, or `deep`. Vietnamese equivalents map the same way: `nhanh` → `fast`, `thường` / `bình thường` → `normal`, `sâu` / `kỹ` → `deep`.
+
+If no level is given, use `normal`. Write the chosen level in the generated prompt and in the short note.
+
+The level changes only how much work is spent. It never relaxes the role contracts, scope fences, handoff protocol, or the read-before-claim rule.
+
+| Knob | `fast` | `normal` | `deep` |
+|---|---|---|---|
+| Planning stage | One planner. It also checks constraints. | One planner per independent area, plus a constraint reviewer when the user gave explicit constraints. Synthesis step if more than one. | Parallel researchers per area, a constraint reviewer, then a plan synthesizer. |
+| Plan gate | None. | None. | A read-only plan reviewer checks the synthesized plan against the requirements before implementation. A FAIL stops the run. |
+| Investigation depth | Referenced files and their direct callers. | Also call sites, related tests, and config. | Also end-to-end data flow and cross-module effects. |
+| Planner output | Compact: `SCOPE`, `UNRESOLVED`, `EXPECTED FILES`, `ACCEPTANCE CRITERIA`, `EXECUTION SETTINGS`. | Full contract. | Full contract. |
+| Review | One reviewer. | One reviewer. | Parallel read-only reviewers by dimension (correctness, scope, tests) plus a review synthesizer. |
+| Verification | Narrowest test per changed area. Lint/typecheck only if quick. | A test per acceptance criterion, plus lint/typecheck on touched files. | Also the broader regression suite and edge cases named in `RISKS / REGRESSIONS`. |
+| Model/effort bounds | Small or medium model, effort at most `medium`. | Any model, effort at most `high`. | Any model, any effort. |
+| Planner/researcher defaults | Small model, `low` effort. | Medium model, `medium` effort. | Large model, `high` effort. |
+
+Do not add a fix loop because of the level. Only the user can request one (section 9).
+
+If the user's explicit constraints conflict with the level (for example `deep` with a fixed single reviewer), the explicit constraint wins. Mention the conflict in the short note.
+
+---
+
+# 11. Model and effort selection
+
+The parent does not choose models or effort itself. Settings come from these sources, in this order of priority:
+
+1. Constraints the user fixed explicitly. Copy them verbatim.
+2. The planner's `EXECUTION SETTINGS` for implementer and reviewer steps. When there are multiple planners, the synthesis step merges them; when there is a plan gate, the plan reviewer may adjust them.
+3. The reviewer's `Fix Settings` for the next fix step.
+4. The level defaults from section 10 for planners, researchers, and any step that has no setting above.
+
+Require the planner to choose per downstream step, based on how hard and risky that step is:
+
+```text
+For every downstream implementer and reviewer step, choose a model and an effort level and give a one-line reason.
+Use a smaller model and lower effort for mechanical, local changes.
+Use a larger model and higher effort for cross-module logic, data migrations, concurrency, security, or unclear requirements.
+Stay within these bounds: <level bounds>.
+```
+
+Require the reviewer, on FAIL with a fix loop, to choose `Fix Settings` the same way. Escalate model or effort when the failure came from complexity rather than a simple slip.
+
+The generated parent prompt must say:
+
+```text
+Pass model and effort exactly as given in EXECUTION SETTINGS or Fix Settings.
+If a value is missing or outside the bounds for this level, use the level default instead and record that in the run history log.
+If the subagent tool has no model or effort parameter, omit it. Do not invent parameters.
+```
+
+Name the parameters the way the user's tool does, when the user states it. In Claude Code the `Agent` tool takes `model` (`haiku`, `sonnet`, `opus`) and `effort` (`low`, `medium`, `high`, `xhigh`, `max`). Otherwise use the neutral tiers small / medium / large and low / medium / high.
+
+---
+
+# 12. Scope fences
 
 Always preserve user-provided exclusions verbatim.
 
@@ -501,7 +575,7 @@ If a user says "do not do X", never transform it into a softer instruction such 
 
 ---
 
-# 11. File and repository safety
+# 13. File and repository safety
 
 For implementation prompts, prefer:
 
@@ -526,7 +600,7 @@ Never speculate about code you have not opened. If the user references a specifi
 
 ---
 
-# 12. Tests and verification
+# 14. Tests and verification
 
 Do not merely say "write tests."
 
@@ -544,11 +618,65 @@ Do not claim tests passed unless the subagent actually ran them.
 
 ---
 
-# 13. Prompt-generation procedure
+# 15. Run history log
+
+The generated parent prompt must keep a run history log and save it as a file in the current project. It must do this whatever the outcome: PASS, FAIL, BLOCKED, or stopped on `UNRESOLVED`. The log lets the user copy each subagent prompt and re-run, audit, or tweak it.
+
+Log file location:
+
+- Folder: `prompt-logs/` at the project root (the orchestrating agent's working directory), unless the user names another folder. Create it if missing.
+- File name: `<YYYYMMDD-HHMMSS>-<task-slug>.md`, using the current local time and a short kebab-case slug of the task. If the time cannot be read, use `<task-slug>-<n>.md` with the next free `n`.
+- Never overwrite an existing log file.
+
+The generated parent prompt must say:
+
+```text
+Write the log file only after the final step has finished, so no reviewer sees it in the diff.
+Write it yourself. Do not delegate it to a subagent.
+In the final answer, give the log file path and the final verdict. Do not repeat the log.
+If the file cannot be written, print the log in the final answer instead and say why.
+```
+
+Every implementer and fix prompt must include `prompt-logs/` (or the user's folder) under DO NOT TOUCH.
+
+Do not edit `.gitignore` for the log folder. Mention in the short note that the user may want to ignore it.
+
+Log file format:
+
+```text
+===== RUN HISTORY LOG =====
+Task: <one-line summary>
+Level: <fast | normal | deep>
+Final verdict: <PASS | FAIL | BLOCKED | STOPPED>
+
+----- STEP <n> | <role> | <PARALLEL with steps … | SEQUENTIAL after steps …> -----
+Settings: model=<…> effort=<…> source=<user | planner | reviewer | level default>
+Status: <DONE | PASS | FAIL | BLOCKED | SKIPPED>
+PROMPT:
+<the exact prompt sent to the subagent>
+RESULT SUMMARY:
+<section headings with verdict lines, UNRESOLVED items, and files changed; no full output>
+
+...
+
+===== END RUN HISTORY LOG =====
+```
+
+Rules for the log:
+
+- Number steps in the order they started. Parallel steps share a stage and list each other.
+- Copy prompts exactly as sent. Do not paraphrase or shorten them.
+- When a prompt embeds an upstream output that is already summarized in the log, replace only the body between its delimiters with `<<verbatim output of STEP n>>`. Keep the delimiter lines.
+- Record every fallback to a level default and every skipped step, with the reason.
+- The log is a record. It must not change how the orchestration runs.
+
+---
+
+# 16. Prompt-generation procedure
 
 When the user gives a task, generate the final orchestration prompt using this order:
 
-1. Parent-agent role and tool constraints.
+1. Parent-agent role, tool constraints, and speed level.
 2. Global scope and exclusions.
 3. Repository/project context.
 4. Dependency graph.
@@ -557,7 +685,8 @@ When the user gives a task, generate the final orchestration prompt using this o
 7. Handoff artifacts with explicit delimiters.
 8. Reviewer stage.
 9. Optional fix loop if requested.
-10. Final result contract.
+10. Model and effort rules (section 11).
+11. Final result contract, ending with writing the run history log file (section 15).
 
 Preserve exact names, paths, IDs, task numbers, and constraints from the user's input.
 
@@ -567,7 +696,7 @@ Do not silently add business requirements.
 
 ---
 
-# 14. Quality checklist before returning the generated prompt
+# 17. Quality checklist before returning the generated prompt
 
 Verify:
 
@@ -589,15 +718,19 @@ Verify:
 - [ ] No subagent is asked to solve another role's responsibility.
 - [ ] The generated prompt does not itself implement the underlying task.
 - [ ] Planner, implementer, and reviewer prompts require reading referenced files before any claim about the code.
+- [ ] The speed level is stated, and the stage shape matches it (section 10).
+- [ ] Planner requires `EXECUTION SETTINGS`; reviewer requires `Fix Settings` when a fix loop exists.
+- [ ] The parent passes model and effort only from user constraints, planner, reviewer, or level defaults, and never invents parameters.
+- [ ] The parent writes the run history log file to `prompt-logs/` (or the user's folder) after the final step, on every outcome, and implementers must not touch that folder.
 - [ ] The generated note and prompt use the same language as the user's input, with no mixed Vietnamese and English prose.
 
 ---
 
-# 15. Output format for this skill
+# 18. Output format for this skill
 
 Unless the user asks for explanation, return:
 
-1. A short note describing the orchestration shape.
+1. A short note describing the orchestration shape and the speed level.
 2. One complete copy-paste-ready orchestration prompt.
 3. If useful, a compact dependency diagram.
 

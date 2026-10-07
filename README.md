@@ -70,9 +70,23 @@ Describe the coding task and ask for an orchestration prompt. The skill triggers
 - `/caopg:caopg` in Claude Code when installed as a plugin
 - `/caopg` when installed as a plain skill
 
+**Speed levels:** start the request with `fast`, `normal` (the default), or `deep`. In Vietnamese, `nhanh`, `thường`, or `sâu` work too. The level sets:
+
+| | `fast` | `normal` | `deep` |
+|---|---|---|---|
+| Planning | 1 planner | planner per area (+ constraint reviewer) | parallel researchers + synthesizer + plan gate |
+| Review | 1 reviewer | 1 reviewer | parallel reviewers by dimension + synthesizer |
+| Investigation / tests | direct callers, narrowest test | call sites, test per criterion, lint/typecheck | data flow, regression suite, edge cases |
+| Model / effort cap | medium model, `medium` | any, `high` | any, any |
+
+**Model and effort** are chosen by the planner for each implementer and reviewer step. On a FAIL the reviewer chooses them for the fix step. Both stay within the level's cap. Anything you fix explicitly overrides them.
+
+**Run history log:** when the run finishes, the parent writes `prompt-logs/<YYYYMMDD-HHMMSS>-<task-slug>.md` in your project. It lists every step with its exact prompt, settings, status, and a result summary, so you can copy a step and re-run it. To use another folder, name it in your request. Add `prompt-logs/` to `.gitignore` if you don't want to commit the logs.
+
 **Example input:**
 
 ```text
+deep
 Generate an orchestration prompt for this task:
 - Task 1: add a `status` column to the `orders` table (migration).
 - Task 2: expose `status` in GET /orders/{id}.
