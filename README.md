@@ -1,123 +1,151 @@
 # Coding Agent Orchestration Prompt Generator
 
-An agent skill that turns a coding task into a strict, copy-paste-ready **multi-agent orchestration prompt**. The generated prompt makes a parent agent act purely as a coordinator. It delegates to planner, implementer, and reviewer subagents, with explicit dependencies, safe parallelism, verbatim handoffs, scope fences, and structured output contracts.
+`caopg` is an agent skill that turns a coding task into a ready-to-paste prompt for a **coordinating agent**. That agent doesn't touch the code itself. It hands the work to planner, implementer, and reviewer subagents, in the right order, in parallel where it's safe, and with clear rules for what each one returns.
 
-The skill does **not** solve your task. It writes the prompt that orchestrates the agents that do.
+The skill doesn't solve your task. It writes the prompt that runs the agents who do.
 
-## What you get
+## How it works
 
-For each task, the skill returns:
-
-1. A short note describing the orchestration shape.
-2. One self-contained orchestration prompt (it doesn't need the skill at runtime).
-3. A compact dependency diagram, when useful.
-
-The default pipeline:
+**1. The skill writes the prompt** (in your session, no code is touched):
 
 ```text
-Parallel planners / researchers / constraint reviewer
-        │
-        ▼
-   Synthesis ──> Implementer ──> Independent Reviewer  (──> optional fix loop)
+your request ──> read flags ──> estimate size ──> pick level ──> map task dependencies
+                                (trivial…large)   (fast/normal/deep)          │
+                                                                              ▼
+                        short note + orchestration prompt + diagram + prompt-logs/<time>-<task>.md
 ```
 
-Built-in guarantees:
+**2. The coordinating agent runs it.** It only spawns subagents and passes their output along; it never reads or edits code itself.
 
-- **Orchestrator only:** the parent never reads code, edits files, or reviews diffs itself.
-- **Dependency-first:** tasks are classified as `PARALLEL`, `SEQUENTIAL`, `GATE`, or `FINAL`. Work runs in parallel only when write sets are disjoint and no task needs another's output.
-- **Verbatim handoffs:** upstream output is wrapped in delimiters such as `===== PLAN FROM PLANNER =====`. The repo and diff stay the source of truth.
-- **Output contracts:**
-  - Planner: scope, dependencies, `UNRESOLVED`, acceptance criteria.
-  - Implementer: files changed, scope deviations, tests.
-  - Reviewer: `PASS` / `FAIL` / `BLOCKED` for each criterion, with evidence.
-- **Scope fences:** your exclusions are kept word for word and never softened.
-- **No hallucination:** every subagent must read files before making claims about them.
-- **Language matching:** output is in Vietnamese or English, matching your input. Paths, IDs, and tool params are never translated.
+```text
+PLAN
+  ├─ planner / researcher: area A ─┐
+  ├─ planner / researcher: area B ─┼─ in parallel                        normal, deep
+  └─ constraint reviewer ──────────┘
+                  │
+                  ▼
+          plan synthesizer                                               when >1 planner
+                  │
+                  ▼
+          plan reviewer ── FAIL ──> stop                                 deep only
+                  │
+                  │   ===== PLAN ===== + model/effort per step (passed verbatim)
+                  ▼
+BUILD
+          implementer(s)                       parallel only if their files don't overlap
+                  │
+                  │   ===== PLAN ===== + ===== IMPLEMENTATION RESULT =====
+                  ▼
+REVIEW
+          reviewer                             deep: correctness + scope + tests
+                  │                                  in parallel, then a synthesizer
+                  ▼
+          verdict ─┬─ PASS ──────> final report
+                   ├─ BLOCKED ───> stop, report what's missing
+                   └─ FAIL ──────> fix round: implementer-fix ──> reviewer
+                                   repeats up to --max-fix=N, then stops with the findings
+                                   (no --max-fix: stop on the first FAIL)
+```
 
-## Setup
+Smaller tasks use less of this: `fast` runs one planner and one reviewer, and a trivial change skips the planner entirely (the implementer writes a short plan before editing).
 
-The skill is called `caopg`, short for **C**oding **A**gent **O**rchestration **P**rompt **G**enerator. You don't need to clone this repo to install it.
+- **Sized to the task.** A one-line rename gets an implementer and a reviewer. A cross-module migration gets parallel researchers, a plan check, and several reviewers. The coordinator can't spawn agents beyond the ones listed.
+- **Safe ordering.** Work runs in parallel only when it touches different files and doesn't depend on another step's output.
+- **Strict handoffs.** Each agent gets the previous agent's output word for word, and must return a fixed format. The reviewer gives `PASS` / `FAIL` / `BLOCKED` with evidence.
+- **No guessing.** Every agent must read a file before making claims about it, and your exclusions are kept word for word.
+- **Your language.** Write in English or Vietnamese and the prompt comes back in the same language.
 
-### Claude Code (plugin marketplace)
+## Install
+
+**Claude Code**
 
 ```bash
 claude plugin marketplace add buonnguwaaa/coding-agent-orchestration-prompt-generator
 claude plugin install caopg@caopg
 ```
 
-Inside a session, you can run `/plugin marketplace add ...` and `/plugin install caopg@caopg` instead. To get new versions, run `claude plugin marketplace update caopg`.
-
-### Cursor, Codex, Copilot, OpenCode, and other agents
-
-Use the [`skills`](https://github.com/vercel-labs/skills) CLI:
+**Cursor, Codex, Copilot, OpenCode, and others** (via the `[skills](https://github.com/vercel-labs/skills)` CLI)
 
 ```bash
-# Pick agents interactively
 npx skills add buonnguwaaa/coding-agent-orchestration-prompt-generator
-
-# Or target specific agents (-g installs globally rather than per project)
-npx skills add buonnguwaaa/coding-agent-orchestration-prompt-generator -a cursor -a claude-code -g
 ```
 
-### Manual
+**Manual:** copy `plugins/caopg/skills/caopg/` into your agent's skills folder (such as `.claude/skills/`).
 
-Copy `plugins/caopg/skills/caopg/` into your agent's skills directory, such as `.claude/skills/` or `.agents/skills/`. You can also paste the contents of `SKILL.md` into the agent's custom instructions.
+## Update
+
+**Claude Code:** refresh the marketplace, update the plugin, then restart Claude Code.
+
+```bash
+claude plugin marketplace update caopg
+claude plugin update caopg@caopg
+```
+
+`**skills` CLI:**
+
+```bash
+npx skills update caopg
+```
+
+Add `-g` for a global install or `-p` for a project install.
+
+**Manual:** copy the latest `plugins/caopg/skills/caopg/` over your existing copy.
 
 ## Usage
 
-Describe the coding task and ask for an orchestration prompt. The skill triggers on requests for a prompt that coordinates planner, implementer, or reviewer subagents. You can also invoke it directly:
-
-- `/caopg:caopg` in Claude Code when installed as a plugin
-- `/caopg` when installed as a plain skill
-
-**Speed levels:** start the request with `fast`, `normal` (the default), or `deep`. In Vietnamese, `nhanh`, `thường`, or `sâu` work too. The level sets:
-
-| | `fast` | `normal` | `deep` |
-|---|---|---|---|
-| Planning | 1 planner | planner per area (+ constraint reviewer) | parallel researchers + synthesizer + plan gate |
-| Review | 1 reviewer | 1 reviewer | parallel reviewers by dimension + synthesizer |
-| Investigation / tests | direct callers, narrowest test | call sites, test per criterion, lint/typecheck | data flow, regression suite, edge cases |
-| Model / effort cap | medium model, `medium` | any, `high` | any, any |
-
-**Model and effort** are chosen by the planner for each implementer and reviewer step. On a FAIL the reviewer chooses them for the fix step. Both stay within the level's cap. Anything you fix explicitly overrides them.
-
-**Prompt log:** each time the skill generates a prompt, it immediately saves the request, note, diagram, and full prompt to `prompt-logs/<YYYYMMDD-HHMMSS>-<task-slug>.md` in your current project. To use another folder, name it in your request. Add `prompt-logs/` to `.gitignore` if you don't want to commit the logs.
-
-**Example input:**
+Ask for an orchestration prompt and describe the task, or call the skill directly with `/caopg:caopg` (plugin) or `/caopg` (plain skill). Then paste the result into your coordinating agent.
 
 ```text
-deep
+--deep --max-fix=2
 Generate an orchestration prompt for this task:
 - Task 1: add a `status` column to the `orders` table (migration).
 - Task 2: expose `status` in GET /orders/{id}.
 - Task 3: update the admin UI order detail page to show `status`.
 Constraints: subagent_type=generalPurpose, run_in_background=false.
 Out of scope: do not touch the payments module.
-Add a fix loop, max 2 retries.
 ```
 
-**Tips for better prompts:**
+You get back a short note (shape, level, number of agents), the prompt, and a dependency diagram when it helps. A copy is saved to `prompt-logs/` in your project; name another folder in your request to change it.
 
-- **Task IDs and file paths:** list them explicitly. They are preserved exactly.
-- **Tool constraints:** state any constraint such as `subagent_type=...` or `run_in_background=...`. The skill copies it verbatim. `run_in_background=false` is the default.
-- **Exclusions:** write them as "do not ..." or "out of scope ...".
-- **Fix loop:** ask for one if you want it, and give a max retry count. Without one, the orchestration stops on `FAIL`.
-- **Project conventions:** mention any project skill files. Subagents will be told to read them.
+### Flags
 
-Then paste the generated prompt into your orchestrating agent.
+Flags can go anywhere in the request.
 
-## Repository layout
+
+| Flag                             | What it does                                                                                  | Default               |
+| -------------------------------- | --------------------------------------------------------------------------------------------- | --------------------- |
+| `--fast` · `--normal` · `--deep` | The most work the agents may spend (see below). Vietnamese: `--nhanh` · `--thường` · `--sâu`. | picked from task size |
+| `--max-fix=N`                    | After a `FAIL`, allow up to `N` fix-and-re-review rounds. `0` means none.                     | no fix loop           |
+| `--skip-tests=true`              | Don't write or run tests. Lint, typecheck, and build still run.                               | `false`               |
+
+
+### Speed levels
+
+
+|                | `--fast`       | `--normal`                      | `--deep`                                          |
+| -------------- | -------------- | ------------------------------- | ------------------------------------------------- |
+| Planning       | 1 planner      | 1 planner per area              | parallel researchers + plan check                 |
+| Review         | 1 reviewer     | 1 reviewer                      | 1 reviewer each for correctness, scope, and tests |
+| Testing        | narrowest test | a test per acceptance criterion | plus the regression suite                         |
+| Model / effort | up to medium   | up to high                      | no limit                                          |
+
+
+Without a flag, small tasks get `fast`, medium ones `normal`, and large or risky ones (migrations, security, concurrency, payments) `deep`. The level is a ceiling: steps with nothing to do are dropped.
+
+### Tips
+
+- List task IDs and file paths explicitly. They're kept exactly.
+- Write exclusions as "do not …" or "out of scope …".
+- State tool settings like `subagent_type=...` and they're copied as is. `run_in_background=false` is the default.
+- Name a model or effort for a step to override the agents' own choice.
+- Mention project skill files and the agents will be told to read them.
+
+## Development
 
 ```text
-.claude-plugin/marketplace.json            # marketplace catalog (Claude Code + skills CLI)
-plugins/caopg/.claude-plugin/plugin.json   # plugin manifest; bump "version" on release
-plugins/caopg/skills/caopg/SKILL.md        # the skill definition
-README.md
+.claude-plugin/marketplace.json            # marketplace catalog
+plugins/caopg/.claude-plugin/plugin.json   # plugin manifest
+plugins/caopg/skills/caopg/SKILL.md        # the skill itself
 ```
 
-## Publishing a new version
-
-1. Edit `SKILL.md`.
-2. Bump `version` in `plugin.json`.
-3. Validate with `claude plugin validate .`.
-4. Push to GitHub.
+To release: edit `SKILL.md`, bump `version` in `plugin.json`, run `claude plugin validate .`, and push.

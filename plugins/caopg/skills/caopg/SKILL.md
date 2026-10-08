@@ -65,6 +65,8 @@ Parent ── parallel ──────┼── Independent planner/researche
                                                               Reviewer
 ```
 
+This is the largest shape. Scale it down to the task size (section 10.1): drop stages that have nothing to do, and use fewer agents for simple tasks.
+
 Only parallelize work when the tasks:
 
 1. do not modify the same files;
@@ -467,6 +469,17 @@ Do not let the reviewer fix the issue unless the user explicitly asks for a fix 
 
 # 9. Optional fix loop
 
+The user can request a fix loop in words (for example "add a fix loop, max 2 retries") or with a flag, anywhere in the request:
+
+- `--max-fix=N` or `--max-fix N`, where `N` is a whole number. Aliases: `--fix=N`, `--sửa=N`, `--sua=N`.
+
+Match the flag case-insensitively and remove it from the task text before using it.
+
+- `N` ≥ 1: add a fix loop with at most `N` fix rounds. One round is one Implementer-Fix run followed by one Reviewer run.
+- `N` = 0: no fix loop. The orchestration stops on FAIL, even if the task text asks for one.
+- If `N` is missing or not a whole number, do not guess. Generate no fix loop and say in the short note that the flag was ignored.
+- If both the flag and the task text give a count, the flag wins. Mention the conflict in the short note. If the flag is given more than once, use the last one.
+
 If the user wants an iterative repair workflow, generate:
 
 ```text
@@ -491,30 +504,73 @@ It must modify only the failed areas.
 
 Set a maximum retry count when the user specifies one. If none is specified, do not invent an arbitrary retry policy; state that the orchestration stops on FAIL.
 
+The generated parent prompt must count fix rounds. When the reviewer still returns FAIL after the last allowed round, the parent stops, does not start another fix, and reports the final FAIL with the last reviewer findings and the number of rounds used.
+
 ---
 
 # 10. Speed level
 
-The user may pick one of three levels: `fast`, `normal`, or `deep`. Vietnamese equivalents map the same way: `nhanh` → `fast`, `thường` / `bình thường` → `normal`, `sâu` / `kỹ` → `deep`.
+The user may pick one of three levels: `fast`, `normal`, or `deep`. The level is given as a flag prefixed with `--`, anywhere in the request:
 
-If no level is given, use `normal`. Write the chosen level in the generated prompt and in the short note.
+- `--fast`, `--nhanh` → `fast`
+- `--normal`, `--thường`, `--bình-thường`, `--thuong`, `--binh-thuong` → `normal`
+- `--deep`, `--sâu`, `--kỹ`, `--sau`, `--ky` → `deep`
+
+Match flags case-insensitively. A bare word without `--` (for example `deep` or `nhanh` in the task text) is part of the task, not a level. Remove the flag from the task text before using it.
+
+If more than one level flag is given, use the last one and mention it in the short note. Other flags (such as `--max-fix`, section 9, and `--skip-tests`, section 14.1) are not levels. An unknown `--` flag is not a level; leave it in the task text.
+
+If no level flag is given, pick the level from the task size (section 10.1). Write the chosen level in the generated prompt and in the short note.
 
 The level changes only how much work is spent. It never relaxes the role contracts, scope fences, handoff protocol, or the read-before-claim rule.
 
-| Knob | `fast` | `normal` | `deep` |
-|---|---|---|---|
-| Planning stage | One planner. It also checks constraints. | One planner per independent area, plus a constraint reviewer when the user gave explicit constraints. Synthesis step if more than one. | Parallel researchers per area, a constraint reviewer, then a plan synthesizer. |
-| Plan gate | None. | None. | A read-only plan reviewer checks the synthesized plan against the requirements before implementation. A FAIL stops the run. |
-| Investigation depth | Referenced files and their direct callers. | Also call sites, related tests, and config. | Also end-to-end data flow and cross-module effects. |
-| Planner output | Compact: `SCOPE`, `UNRESOLVED`, `EXPECTED FILES`, `ACCEPTANCE CRITERIA`, `EXECUTION SETTINGS`. | Full contract. | Full contract. |
-| Review | One reviewer. | One reviewer. | Parallel read-only reviewers by dimension (correctness, scope, tests) plus a review synthesizer. |
-| Verification | Narrowest test per changed area. Lint/typecheck only if quick. | A test per acceptance criterion, plus lint/typecheck on touched files. | Also the broader regression suite and edge cases named in `RISKS / REGRESSIONS`. |
-| Model/effort bounds | Small or medium model, effort at most `medium`. | Any model, effort at most `high`. | Any model, any effort. |
-| Planner/researcher defaults | Small model, `low` effort. | Medium model, `medium` effort. | Large model, `high` effort. |
+| Knob                        | `fast`                                                                                                | `normal`                                                                                                                             | `deep`                                                                                                                    |
+| --------------------------- | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Planning stage              | One planner. It also checks constraints.                                                                | One planner per independent area, plus a constraint reviewer when the user gave explicit constraints. Synthesis step if more than one. | Parallel researchers per area, a constraint reviewer, then a plan synthesizer.                                              |
+| Plan gate                   | None.                                                                                                   | None.                                                                                                                                  | A read-only plan reviewer checks the synthesized plan against the requirements before implementation. A FAIL stops the run. |
+| Investigation depth         | Referenced files and their direct callers.                                                              | Also call sites, related tests, and config.                                                                                            | Also end-to-end data flow and cross-module effects.                                                                         |
+| Planner output              | Compact:`SCOPE`, `UNRESOLVED`, `EXPECTED FILES`, `ACCEPTANCE CRITERIA`, `EXECUTION SETTINGS`. | Full contract.                                                                                                                         | Full contract.                                                                                                              |
+| Review                      | One reviewer.                                                                                           | One reviewer.                                                                                                                          | Parallel read-only reviewers by dimension (correctness, scope, tests) plus a review synthesizer.                            |
+| Verification                | Narrowest test per changed area. Lint/typecheck only if quick.                                          | A test per acceptance criterion, plus lint/typecheck on touched files.                                                                 | Also the broader regression suite and edge cases named in`RISKS / REGRESSIONS`.                                           |
+| Model/effort bounds         | Small or medium model, effort at most`medium`.                                                        | Any model, effort at most`high`.                                                                                                     | Any model, any effort.                                                                                                      |
+| Planner/researcher defaults | Small model,`low` effort.                                                                             | Medium model,`medium` effort.                                                                                                        | Large model,`high` effort.                                                                                                |
 
 Do not add a fix loop because of the level. Only the user can request one (section 9).
 
 If the user's explicit constraints conflict with the level (for example `deep` with a fixed single reviewer), the explicit constraint wins. Mention the conflict in the short note.
+
+## 10.1 Sizing the workforce
+
+Spend no more agents than the task needs. Every subagent run costs time, and a long chain of agents for a simple change makes the session run far longer than the work itself.
+
+Before choosing the stage shape, estimate the task size from the request:
+
+| Size      | Signals                                                                                                                                 | Subagent runs (without fix loop) |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| `trivial` | One area, about 1–2 files, mechanical change with a clear target (rename, text or config value, add a field that is only passed through). | 2                                |
+| `small`   | One area, a few files, clear requirements, no risk markers.                                                                                | 3                                |
+| `medium`  | 2–3 independent areas, or requirements that need investigation to pin down.                                                               | up to 6                          |
+| `large`   | Many areas, or any risk marker: data migration, concurrency, security, auth, payments, cross-module contracts, or possible data loss.    | as the `deep` shape needs        |
+
+When the task sits between two sizes, choose the smaller one, unless it has a risk marker.
+
+Without a level flag, map size to level: `trivial` / `small` → `fast`, `medium` → `normal`, `large` → `deep`.
+
+With a level flag, the level is the user's choice and is kept. It sets the most work allowed, not the least. Inside it, still drop every stage that has nothing to do:
+
+- One independent area: one planner (or one researcher), and no synthesis step.
+- No explicit user constraints: no constraint reviewer.
+- Only one implementation task: one implementer.
+
+Shape per size:
+
+- `trivial` at `fast`: no planner. One implementer first writes a compact plan in its output (`SCOPE`, `EXPECTED FILES`, `ACCEPTANCE CRITERIA`), then makes the change. One independent reviewer checks it against that plan and the user's request. Implementer settings come from the level defaults. If the implementer finds the task is bigger than expected (more files or areas than the request implies, or a risk marker), it stops with BLOCKED and says why, instead of growing the change.
+- `small`: planner → implementer → reviewer.
+- `medium` and `large`: the shape from the level table, minus the empty stages above.
+
+The generated parent prompt must list the exact subagent runs it will make and tell the parent not to spawn any others. Fix rounds (section 9) are the only allowed extra runs.
+
+State the size, the reason in one line, and the number of subagent runs in the short note. Example: `Size: small (one endpoint, 2 files) — 3 runs: planner, implementer, reviewer; up to 2 fix rounds.`
 
 ---
 
@@ -614,6 +670,29 @@ For each acceptance criterion:
 
 Do not claim tests passed unless the subagent actually ran them.
 
+## 14.1 Skipping tests
+
+The user can turn tests off with a flag, anywhere in the request:
+
+- `--skip-tests=true` skips tests.
+- `--skip-tests=false` runs tests as usual.
+- If the flag is not given, the value is `false`.
+
+Match the flag name and value case-insensitively and remove the flag from the task text before using it. If the value is anything other than `true` or `false`, use `false` and say in the short note that the flag was ignored. If the flag is given more than once, use the last one.
+
+With `--skip-tests=true`, the generated prompt must say:
+
+- No subagent writes, edits, or runs tests. Existing tests are left untouched.
+- The implementer still runs lint, typecheck, or build on touched files when the project has them and they are quick. They catch broken code at little cost. Report them under `Verification`.
+- The implementer and reviewer write `Not run — skipped by the user (--skip-tests=true)` under `Tests`.
+- The reviewer still reads the diff and checks correctness, scope, and regressions by reading the code. It must not return FAIL because tests are missing or were not run. It may name untested risks as notes.
+- At `deep`, there is no separate tests reviewer.
+- Acceptance criteria are checked by reading the code and by lint, typecheck, or build output, not by tests.
+
+If the task text itself asks for tests (for example "add a unit test for X"), that is part of the task, so the flag and the task conflict. Keep the requested test work, skip all other testing, and mention the conflict in the short note.
+
+State `Tests: skipped (--skip-tests=true)` in the short note.
+
 ---
 
 # 15. Prompt log file
@@ -633,6 +712,9 @@ File content, in this order:
 
 - Created: <YYYY-MM-DD HH:MM:SS>
 - Level: <fast | normal | deep>
+- Size: <trivial | small | medium | large> — <number> subagent runs
+- Tests: <run | skipped (--skip-tests=true)>
+- Max fix rounds: <N | none>
 
 ## Request
 <the user's request, verbatim>
@@ -662,7 +744,7 @@ Every implementer and fix prompt in the generated orchestration must list `promp
 
 When the user gives a task, generate the final orchestration prompt using this order:
 
-1. Parent-agent role, tool constraints, and speed level.
+1. Parent-agent role, tool constraints, speed level, task size, and the list of subagent runs (section 10.1).
 2. Global scope and exclusions.
 3. Repository/project context.
 4. Dependency graph.
@@ -707,7 +789,10 @@ Verify:
 - [ ] The generated prompt does not itself implement the underlying task.
 - [ ] Planner, implementer, and reviewer prompts require reading referenced files before any claim about the code.
 - [ ] The speed level is stated, and the stage shape matches it (section 10).
+- [ ] With `--skip-tests=true`, no subagent writes or runs tests, the reviewer does not FAIL for missing tests, and the note says tests are skipped (section 14.1).
+- [ ] The task size is stated, no stage exists that has nothing to do, and the parent is told not to spawn subagents beyond the listed runs (section 10.1).
 - [ ] Planner requires `EXECUTION SETTINGS`; reviewer requires `Fix Settings` when a fix loop exists.
+- [ ] If a fix loop exists, the max fix rounds come from `--max-fix` or the task text, and the parent stops with a final FAIL report once they run out (section 9).
 - [ ] The parent passes model and effort only from user constraints, planner, reviewer, or level defaults, and never invents parameters.
 - [ ] The prompt log file is saved to `prompt-logs/` (or the user's folder) in this turn, and implementers must not touch that folder.
 - [ ] The generated note and prompt use the same language as the user's input, with no mixed Vietnamese and English prose.
@@ -718,7 +803,7 @@ Verify:
 
 Unless the user asks for explanation, return:
 
-1. A short note describing the orchestration shape and the speed level.
+1. A short note describing the orchestration shape, the speed level, and the task size with its number of subagent runs.
 2. One complete copy-paste-ready orchestration prompt.
 3. If useful, a compact dependency diagram.
 4. The path of the saved prompt log file (section 15).
