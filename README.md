@@ -32,7 +32,7 @@ PLAN
                   │   ===== PLAN ===== + model/effort per step (passed verbatim)
                   ▼
 BUILD
-          implementer(s)                       parallel only if their files don't overlap
+          implementer(s)                       one at a time, unless each has its own worktree
                   │
                   │   ===== PLAN ===== + ===== IMPLEMENTATION RESULT =====
                   ▼
@@ -47,10 +47,11 @@ REVIEW
                                    (no --max-fix: stop on the first FAIL)
 ```
 
-Smaller tasks use less of this: `fast` runs one planner and one reviewer, and a trivial change skips the planner entirely (the implementer writes a short plan before editing).
+Smaller tasks use less of this: `fast` runs one planner and one reviewer, and a trivial change runs as a single agent (solo mode) with no coordinator at all.
 
-- **Sized to the task.** A one-line rename gets an implementer and a reviewer. A cross-module migration gets parallel researchers, a plan check, and several reviewers. The coordinator can't spawn agents beyond the ones listed.
-- **Safe ordering.** Work runs in parallel only when it touches different files and doesn't depend on another step's output.
+- **Sized to the task.** A one-line rename gets a single agent. A cross-module migration gets parallel researchers, a plan check, and several reviewers. The coordinator can't spawn agents beyond the ones listed.
+- **Safe ordering.** Read-only steps run in parallel when they don't depend on each other. Implementers run one at a time unless each gets its own worktree and they touch different files.
+- **No wasted work.** The planner pins exact `file:line` locations so later agents don't re-explore. Shared rules are written once, outputs are one line per item, and each agent has a tool-call budget after which it stops and reports what it has.
 - **Strict handoffs.** Each agent gets the previous agent's output word for word, and must return a fixed format. The reviewer gives `PASS` / `FAIL` / `BLOCKED` with evidence.
 - **No guessing.** Every agent must read a file before making claims about it, and your exclusions are kept word for word.
 - **Your language.** Write in English or Vietnamese and the prompt comes back in the same language.
@@ -101,7 +102,7 @@ Generate an orchestration prompt for this task:
 - Task 1: add a `status` column to the `orders` table (migration).
 - Task 2: expose `status` in GET /orders/{id}.
 - Task 3: update the admin UI order detail page to show `status`.
-Constraints: subagent_type=generalPurpose, run_in_background=false.
+Constraints: run_in_background=false.
 Out of scope: do not touch the payments module.
 ```
 
@@ -117,6 +118,7 @@ Flags can go anywhere in the request.
 | `--fast` · `--normal` · `--deep` | The most work the agents may spend (see below). Vietnamese: `--nhanh` · `--thường` · `--sâu`. | picked from task size |
 | `--max-fix=N`                    | After a `FAIL`, allow up to `N` fix-and-re-review rounds. `0` means none.                     | no fix loop           |
 | `--skip-tests=true`              | Don't write or run tests. Lint, typecheck, and build still run.                               | `false`               |
+| `--solo=true` / `--solo=false`   | One agent does the change and checks its own diff. No coordinator, no independent reviewer.   | solo for trivial tasks with no level flag |
 
 
 ### Speed levels
@@ -126,7 +128,8 @@ Flags can go anywhere in the request.
 | -------------- | -------------- | ------------------------------- | ------------------------------------------------- |
 | Planning       | 1 planner      | 1 planner per area              | parallel researchers + plan check                 |
 | Review         | 1 reviewer     | 1 reviewer                      | 1 reviewer each for correctness, scope, and tests |
-| Testing        | narrowest test | a test per acceptance criterion | plus the regression suite                         |
+| Testing        | narrowest test, run once (reviewer checks the reported result) | a test per acceptance criterion | plus the regression suite |
+| Tool calls per agent | about 15–30 | about 30–60 | about 40–100 |
 | Model / effort | up to medium   | up to high                      | no limit                                          |
 
 
@@ -136,7 +139,8 @@ Without a flag, small tasks get `fast`, medium ones `normal`, and large or risky
 
 - List task IDs and file paths explicitly. They're kept exactly.
 - Write exclusions as "do not …" or "out of scope …".
-- State tool settings like `subagent_type=...` and they're copied as is. `run_in_background=false` is the default.
+- Each agent runs as the type that fits its role. In Claude Code: researchers use `Explore`, planners and reviewers use `Plan` (read-only), and implementers use `general-purpose`. Name your own types per role to override, such as `planner=Plan, reviewer=code-reviewer`. A single `subagent_type=...` is used only for roles with no better match.
+- State tool settings like `run_in_background=...` and they're copied as is. `run_in_background=false` is the default.
 - Name a model or effort for a step to override the agents' own choice.
 - Mention project skill files and the agents will be told to read them.
 
